@@ -1,0 +1,24 @@
+# Gradle / Android
+lsposed/.gradle/
+lsposed/build/
+lsposed/app/build/
+lsposed/local.properties
+lsposed/.kotlin/
+*.apk
+*.keystore
+*.jks
+
+# Python
+__pycache__/
+*.py[cod]
+python/.niji_session.json
+python/session*.json
+python/session_fresh.json
+python/niji_integrity.bundle.js
+python/fbauth.xml
+python/flows*.txt
+
+# misc
+.DS_Store
+*.log
+.idea/

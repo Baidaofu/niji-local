@@ -25,7 +25,8 @@ public final class Prompt {
             case "v8.1": return "--v 8.1";
             default:
                 if (m.startsWith("--")) return model;
-                return "--" + m;
+                // Unknown alias (dall-e-3, gpt-image-1, ...): keep the default model.
+                return null;
         }
     }
 

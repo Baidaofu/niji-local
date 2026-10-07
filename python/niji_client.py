@@ -293,13 +293,13 @@ class NijiClient:
         if ar:
             parts.append(f"--ar {ar}")
         if model:
-            flag = MODEL_FLAGS.get(model.lower().replace("_", "-"), None)
-            if flag is None and model.startswith("-"):
+            key = model.lower().replace("_", "-")
+            flag = MODEL_FLAGS.get(key)
+            if flag is None and key.startswith("--"):
                 flag = model
-            if flag is None:
-                # allow raw flags such as "--niji 6"
-                flag = model if " " in model or model.startswith("--") else f"--{model}"
-            parts.append(flag)
+            # unknown aliases (dall-e-3, gpt-image-1, ...) keep the default model
+            if flag is not None:
+                parts.append(flag)
         if stylize is not None:
             parts.append(f"--stylize {int(stylize)}")
         if style and style.lower() in STYLE_FLAGS:

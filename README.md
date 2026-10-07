@@ -38,6 +38,37 @@ curl http://127.0.0.1:8199/v1/images/generations \
        "model":"niji-6","size":"1024x1024","n":1}'
 ```
 
+## Third-party clients
+
+### Kelivo (on the phone)
+
+Kelivo's OpenAI Images provider posts to `{baseUrl}/images/generations` with
+`{model, prompt}` and accepts `data[].url` or `data[].b64_json`. It can talk to
+the module directly:
+
+1. Add a custom OpenAI-compatible provider: base URL
+   `http://127.0.0.1:8199/v1`, any API key.
+2. Fetch models (they come from `/v1/models`), or add one manually.
+3. Edit the model spec and set its type to **image**.
+4. Generate from a chat/tool.
+
+### TauriTavern (on the PC)
+
+Use `adb forward tcp:8199 tcp:8199` first.
+
+* **Stable Diffusion → source `OpenAI`**: set the OpenAI base URL to
+  `http://127.0.0.1:8199/v1` and pick a model such as `gpt-image-1`/`dall-e-3`
+  (the model is only a hint; the server maps unknown names to the default niji
+  model). The server replies with `b64_json`, which TauriTavern expects.
+* **Stable Diffusion → source `A1111`/`Forge`**: set the SD WebUI URL to
+  `http://127.0.0.1:8199`, then pick one of the checkpoints listed by
+  `/sdapi/v1/sd-models` (`niji-6`, `niji-7`, ...).
+
+A1111-compatible endpoints implemented: `/sdapi/v1/txt2img`,
+`/sdapi/v1/img2img`, `/sdapi/v1/sd-models`, `/sdapi/v1/options`,
+`/sdapi/v1/samplers`, `/sdapi/v1/schedulers`, `/sdapi/v1/upscalers`,
+`/sdapi/v1/progress`, `/sdapi/v1/interrupt`.
+
 ## Supported generation parameters
 
 `prompt` / `input`, `model` (`niji-7/6/5/4`, `midjourney`, `v6.1`, `v7`),

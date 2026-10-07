@@ -38,6 +38,8 @@ OPENAI_MODELS = [
     {"id": "v7", "object": "model", "owned_by": "niji"},
 ]
 
+A1111_MODELS = ["niji-6", "niji-7", "niji-5", "niji-4", "midjourney", "v6.1", "v7"]
+
 
 def download(url: str, proxy: str | None) -> bytes:
     proxies = {"https": proxy, "http": proxy} if proxy else None
@@ -153,6 +155,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(exc.status or 500, {"error": exc.message})
         elif self.path.startswith("/niji/session"):
             self._json(200, STATE["client"].session)
+        elif self.path.startswith("/sdapi/v1/sd-models"):
+            self._json(200, [{"title": m, "model_name": m} for m in A1111_MODELS])
+        elif self.path.startswith(("/sdapi/v1/samplers", "/sdapi/v1/schedulers",
+                                   "/sdapi/v1/upscalers", "/sdapi/v1/latent-upscale-modes")):
+            self._json(200, [])
+        elif self.path.startswith("/sdapi/v1/options"):
+            self._json(200, {})
+        elif self.path.startswith("/sdapi/v1/progress"):
+            self._json(200, {"progress": 0.0, "state": {}, "current_image": None, "textinfo": ""})
         else:
             self._json(404, {"error": "not_found"})
 
@@ -163,6 +174,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._openai(body)
             elif self.path.startswith("/ai/generate-image"):
                 self._novelai(body)
+            elif self.path.startswith(("/sdapi/v1/txt2img", "/sdapi/v1/img2img")):
+                self._a1111(body)
+            elif self.path.startswith("/sdapi/v1/interrupt"):
+                self._json(200, {})
             else:
                 self._json(404, {"error": "not_found"})
         except NijiError as exc:
@@ -197,6 +212,24 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("access-control-allow-origin", "*")
         self.end_headers()
         self.wfile.write(blob)
+
+    def _a1111(self, body: dict) -> None:
+        gen = {
+            "prompt": body.get("prompt", ""),
+            "negative_prompt": body.get("negative_prompt"),
+            "seed": body.get("seed"),
+            "n": max(1, min(int(body.get("n_iter") or body.get("batch_size") or 1), 4)),
+        }
+        w, h = body.get("width"), body.get("height")
+        if w and h:
+            gen["aspect_ratio"] = f"{int(w)}:{int(h)}"
+        ov = body.get("override_settings") or {}
+        model = ov.get("sd_model_checkpoint") or body.get("model") or body.get("sd_model")
+        if model:
+            gen["model"] = model
+        result = generate(gen, self.proxy)
+        images = [base64.b64encode(download(u, self.proxy)).decode() for u in result["urls"]]
+        self._json(200, {"images": images, "parameters": body, "info": "{}"})
 
 
 def main() -> int:

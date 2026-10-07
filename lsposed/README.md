@@ -70,9 +70,29 @@ curl http://127.0.0.1:8199/ai/generate-image \
 Other endpoints:
 
 ```
-GET /v1/models
-GET /niji/usage
+GET  /v1/models                          OpenAI model list
+GET  /niji/usage                         trial usage
+POST /sdapi/v1/txt2img                   A1111 / Forge (returns {images:[b64]})
+POST /sdapi/v1/img2img
+GET  /sdapi/v1/sd-models                 checkpoint list (niji-6, niji-7, ...)
+GET  /sdapi/v1/options
+GET  /sdapi/v1/samplers|schedulers|upscalers
+GET  /sdapi/v1/progress
+POST /sdapi/v1/interrupt
 ```
+
+`/v1/images/generations` honours `"response_format": "b64_json"` (returns
+base64, which SillyTavern/TauriTavern expect) and defaults to `url`.
+Unknown model names (`dall-e-3`, `gpt-image-1`, ...) are ignored and the default
+niji model is used, so OpenAI-image clients work without tweaking the model.
+
+## Compatible clients
+
+* **Kelivo** (Android): custom OpenAI provider, base URL
+  `http://127.0.0.1:8199/v1`; set the model spec type to `image`.
+* **TauriTavern** (desktop, `adb forward tcp:8199 tcp:8199`):
+  * SD source `OpenAI` with base URL `http://127.0.0.1:8199/v1`
+  * SD source `A1111`/`Forge` with URL `http://127.0.0.1:8199`
 
 ## Parameters
 

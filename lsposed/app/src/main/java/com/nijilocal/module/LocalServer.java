@@ -1,6 +1,7 @@
 package com.nijilocal.module;
 
 import android.content.Context;
+import android.util.Base64;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -22,7 +23,12 @@ import java.util.zip.ZipOutputStream;
 
 import de.robv.android.xposed.XposedBridge;
 
-/** Minimal HTTP server exposing OpenAI / NovelAI compatible endpoints. */
+/**
+ * Minimal HTTP server exposing OpenAI / NovelAI / A1111 compatible endpoints.
+ *
+ * Used by e.g. Kelivo (OpenAI images, reads data[].url or data[].b64_json) and
+ * TauriTavern (OpenAI SD source, A1111/Forge source).
+ */
 public final class LocalServer {
 
     public static final int PORT = 8199;
@@ -85,13 +91,31 @@ public final class LocalServer {
                 read += r;
             }
             String body = new String(bodyBytes, StandardCharsets.UTF_8);
+            JSONObject req = body.isEmpty() ? new JSONObject() : new JSONObject(body);
 
             if (path.startsWith("/v1/models")) {
                 json(s, 200, models());
             } else if (path.startsWith("/v1/images/generations")) {
-                openai(api, s, new JSONObject(body));
+                openai(api, s, req);
             } else if (path.startsWith("/ai/generate-image")) {
-                novelai(api, s, new JSONObject(body));
+                novelai(api, s, req);
+            } else if (path.startsWith("/sdapi/v1/txt2img") || path.startsWith("/sdapi/v1/img2img")) {
+                a1111(api, s, req);
+            } else if (path.startsWith("/sdapi/v1/sd-models")) {
+                jsonRaw(s, 200, sdModels().toString());
+            } else if (path.startsWith("/sdapi/v1/samplers")
+                    || path.startsWith("/sdapi/v1/schedulers")
+                    || path.startsWith("/sdapi/v1/upscalers")
+                    || path.startsWith("/sdapi/v1/latent-upscale-modes")) {
+                jsonRaw(s, 200, "[]");
+            } else if (path.startsWith("/sdapi/v1/options")) {
+                json(s, 200, new JSONObject());
+            } else if (path.startsWith("/sdapi/v1/progress")) {
+                json(s, 200, new JSONObject().put("progress", 0.0)
+                        .put("state", new JSONObject()).put("current_image", JSONObject.NULL)
+                        .put("textinfo", ""));
+            } else if (path.startsWith("/sdapi/v1/interrupt")) {
+                json(s, 200, new JSONObject());
             } else if (path.startsWith("/niji/usage")) {
                 json(s, 200, api.call("GET", "/api/niji-app/user/usage", null, true));
             } else {
@@ -110,6 +134,15 @@ public final class LocalServer {
         return new JSONObject().put("object", "list").put("data", data);
     }
 
+    private static JSONArray sdModels() throws Exception {
+        JSONArray arr = new JSONArray();
+        for (String id : new String[]{"niji-6", "niji-7", "niji-5", "niji-4", "midjourney", "v6.1", "v7"}) {
+            arr.put(new JSONObject().put("title", id).put("model_name", id));
+        }
+        return arr;
+    }
+
+    // ---- shared generation -------------------------------------------------
     private static JSONObject generate(NijiApi api, JSONObject req) throws Exception {
         String prompt = req.optString("prompt", req.optString("input", ""));
         if (prompt.isEmpty()) throw new IllegalArgumentException("prompt is required");
@@ -118,8 +151,8 @@ public final class LocalServer {
         String size = req.optString("size", null);
         String ar = req.optString("aspect_ratio", req.optString("ar", null));
         JSONObject params = req.optJSONObject("parameters") == null ? new JSONObject() : req.optJSONObject("parameters");
-        int width = params.optInt("width", 0);
-        int height = params.optInt("height", 0);
+        int width = params.optInt("width", req.optInt("width", 0));
+        int height = params.optInt("height", req.optInt("height", 0));
         if (ar == null && width > 0 && height > 0) ar = width + ":" + height;
 
         int n = req.optInt("n", params.optInt("n_samples", 1));
@@ -201,19 +234,26 @@ public final class LocalServer {
         return out;
     }
 
+    // ---- OpenAI ------------------------------------------------------------
     private static void openai(NijiApi api, Socket s, JSONObject req) throws Exception {
         JSONObject result = generate(api, req);
         JSONArray urls = result.getJSONArray("urls");
+        boolean wantB64 = "b64_json".equals(req.optString("response_format", ""));
         JSONArray data = new JSONArray();
         for (int i = 0; i < urls.length(); i++) {
             JSONObject item = new JSONObject();
-            item.put("url", urls.getString(i));
+            if (wantB64) {
+                item.put("b64_json", Base64.encodeToString(api.download(urls.getString(i)), Base64.NO_WRAP));
+            } else {
+                item.put("url", urls.getString(i));
+            }
             item.put("revised_prompt", result.getString("prompt"));
             data.put(item);
         }
         json(s, 200, new JSONObject().put("created", System.currentTimeMillis() / 1000).put("data", data));
     }
 
+    // ---- NovelAI -----------------------------------------------------------
     private static void novelai(NijiApi api, Socket s, JSONObject req) throws Exception {
         JSONObject result = generate(api, req);
         JSONArray urls = result.getJSONArray("urls");
@@ -232,8 +272,43 @@ public final class LocalServer {
         s.getOutputStream().flush();
     }
 
+    // ---- A1111 / Forge (sdapi) --------------------------------------------
+    private static void a1111(NijiApi api, Socket s, JSONObject req) throws Exception {
+        JSONObject gen = new JSONObject();
+        gen.put("prompt", req.optString("prompt", ""));
+        if (req.has("negative_prompt")) gen.put("negative_prompt", req.optString("negative_prompt", ""));
+        int w = req.optInt("width", 0), h = req.optInt("height", 0);
+        if (w > 0 && h > 0) gen.put("aspect_ratio", w + ":" + h);
+        if (req.has("seed")) gen.put("seed", req.optLong("seed", 0L));
+        int n = req.optInt("n_iter", req.optInt("batch_size", 1));
+        gen.put("n", Math.max(1, Math.min(n, 4)));
+
+        String model = null;
+        JSONObject ov = req.optJSONObject("override_settings");
+        if (ov != null) model = ov.optString("sd_model_checkpoint", null);
+        if (model == null || model.isEmpty()) model = req.optString("model", null);
+        if (model == null || model.isEmpty()) model = req.optString("sd_model", null);
+        if (model != null && !model.isEmpty()) gen.put("model", model);
+
+        JSONObject result = generate(api, gen);
+        JSONArray urls = result.getJSONArray("urls");
+        JSONArray images = new JSONArray();
+        for (int i = 0; i < urls.length(); i++) {
+            images.put(Base64.encodeToString(api.download(urls.getString(i)), Base64.NO_WRAP));
+        }
+        json(s, 200, new JSONObject()
+                .put("images", images)
+                .put("parameters", req)
+                .put("info", "{}"));
+    }
+
+    // ---- responses ---------------------------------------------------------
     private static void json(Socket s, int code, JSONObject payload) throws Exception {
-        byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+        jsonRaw(s, code, payload.toString());
+    }
+
+    private static void jsonRaw(Socket s, int code, String payload) throws Exception {
+        byte[] data = payload.getBytes(StandardCharsets.UTF_8);
         OutputStream out = new BufferedOutputStream(s.getOutputStream());
         out.write(("HTTP/1.1 " + code + " OK\r\ncontent-type: application/json\r\n"
                 + "content-length: " + data.length + "\r\nconnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
